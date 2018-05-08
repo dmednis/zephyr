@@ -329,8 +329,10 @@ struct bt_mesh_model {
 		} vnd;
 	};
 
-	/* The Element this Model belongs to */
-	struct bt_mesh_elem *elem;
+	/* Internal information, mainly for persistent storage */
+	u8_t  elem_idx;   /* Belongs to Nth element */
+	u8_t  mod_idx;    /* Is the Nth model in the element */
+	u16_t flags;      /* Information about what has changed */
 
 	/* Model Publication */
 	struct bt_mesh_model_pub * const pub;

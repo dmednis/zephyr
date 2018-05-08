@@ -157,7 +157,7 @@ static int publish_retransmit(struct bt_mesh_model *mod)
 	};
 	struct bt_mesh_net_tx tx = {
 		.ctx = &ctx,
-		.src = mod->elem->addr,
+		.src = bt_mesh_model_elem(mod)->addr,
 		.xmit = bt_mesh_net_transmit_get(),
 		.friend_cred = pub->cred,
 	};
@@ -233,12 +233,24 @@ static void mod_publish(struct k_work *work)
 	}
 }
 
+struct bt_mesh_elem *bt_mesh_model_elem(struct bt_mesh_model *mod)
+{
+	return &dev_comp->elem[mod->elem_idx];
+}
+
+struct bt_mesh_model *bt_mesh_model_get(bool vnd, u8_t elem_idx, u8_t mod_idx)
+{
+	if (vnd) {
+		return &dev_comp->elem[elem_idx].vnd_models[mod_idx];
+	} else {
+		return &dev_comp->elem[elem_idx].models[mod_idx];
+	}
+}
+
 static void mod_init(struct bt_mesh_model *mod, struct bt_mesh_elem *elem,
 		     bool vnd, bool primary, void *user_data)
 {
 	int i;
-
-	mod->elem = elem;
 
 	if (mod->pub) {
 		mod->pub->mod = mod;
@@ -247,6 +259,14 @@ static void mod_init(struct bt_mesh_model *mod, struct bt_mesh_elem *elem,
 
 	for (i = 0; i < ARRAY_SIZE(mod->keys); i++) {
 		mod->keys[i] = BT_MESH_KEY_UNUSED;
+	}
+
+	mod->flags = 0;
+	mod->elem_idx = elem - dev_comp->elem;
+	if (vnd) {
+		mod->mod_idx = mod - elem->vnd_models;
+	} else {
+		mod->mod_idx = mod - elem->models;
 	}
 
 	if (vnd) {
@@ -596,7 +616,7 @@ int bt_mesh_model_send(struct bt_mesh_model *model,
 	struct bt_mesh_net_tx tx = {
 		.sub = bt_mesh_subnet_get(ctx->net_idx),
 		.ctx = ctx,
-		.src = model->elem->addr,
+		.src = bt_mesh_model_elem(model)->addr,
 		.xmit = bt_mesh_net_transmit_get(),
 		.friend_cred = 0,
 	};
@@ -613,7 +633,7 @@ int bt_mesh_model_publish(struct bt_mesh_model *model)
 	};
 	struct bt_mesh_net_tx tx = {
 		.ctx = &ctx,
-		.src = model->elem->addr,
+		.src = bt_mesh_model_elem(model)->addr,
 		.xmit = bt_mesh_net_transmit_get(),
 	};
 	int err;
