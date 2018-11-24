@@ -6,6 +6,7 @@
 
 #include <zephyr.h>
 #include <string.h>
+#include <assert.h>
 #include <misc/printk.h>
 
 #include <bluetooth/bluetooth.h>
@@ -20,8 +21,10 @@
 #define MOD_LF            0x0000
 #define OP_HELLO          0xbb
 #define OP_HEARTBEAT      0xbc
+#define OP_PATIENT        0xbd
 #define OP_VND_HELLO      BT_MESH_MODEL_OP_3(OP_HELLO, BT_COMP_ID_LF)
 #define OP_VND_HEARTBEAT  BT_MESH_MODEL_OP_3(OP_HEARTBEAT, BT_COMP_ID_LF)
+#define OP_VND_PATIENT    BT_MESH_MODEL_OP_3(OP_PATIENT, BT_COMP_ID_LF)
 
 #define DEFAULT_TTL       31
 #define GROUP_ADDR        0xc123
@@ -30,7 +33,8 @@
 #define FLAGS             0
 
 /* Maximum characters in "hello" message */
-#define HELLO_MAX         8
+#define HELLO_MAX         32
+#define PATIENT_MAX         32
 
 #define MAX_SENS_STATUS_LEN 8
 
@@ -69,7 +73,7 @@ static void heartbeat(u8_t hops, u16_t feat)
 }
 
 static struct bt_mesh_cfg_srv cfg_srv = {
-	.relay = BT_MESH_RELAY_DISABLED,
+	.relay = BT_MESH_RELAY_ENABLED,
 	.beacon = BT_MESH_BEACON_DISABLED,
 	.default_ttl = DEFAULT_TTL,
 
@@ -314,7 +318,7 @@ static void vnd_hello(struct bt_mesh_model *model,
 	size_t len;
 
 	printk("Hello message from 0x%04x\n", ctx->addr);
-
+    led(2, 0);
 	if (ctx->addr == bt_mesh_model_elem(model)->addr) {
 		printk("Ignoring message from self\n");
 		return;
@@ -329,7 +333,7 @@ static void vnd_hello(struct bt_mesh_model *model,
 	strcat(str, " says hi!");
 	board_show_text(str, false, K_SECONDS(3));
 
-	board_blink_leds();
+//	board_blink_leds();
 }
 
 static void vnd_heartbeat(struct bt_mesh_model *model,
@@ -352,9 +356,113 @@ static void vnd_heartbeat(struct bt_mesh_model *model,
 	board_add_heartbeat(ctx->addr, hops);
 }
 
+#define DICT_LEN 256
+
+int *create_delim_dict(char *delim)
+{
+    int *d = (int*)malloc(sizeof(int)*DICT_LEN);
+    memset((void*)d, 0, sizeof(int)*DICT_LEN);
+
+    int i;
+    for(i=0; i< strlen(delim); i++) {
+        d[delim[i]] = 1;
+    }
+    return d;
+}
+
+char *my_strtok(char *str, char *delim)
+{
+
+    static char *last, *to_free;
+    int *deli_dict = create_delim_dict(delim);
+
+    if(!deli_dict) {
+        return NULL;
+    }
+
+    if(str) {
+        last = (char*)malloc(strlen(str)+1);
+        if(!last) {
+            free(deli_dict);
+        }
+        to_free = last;
+        strcpy(last, str);
+    }
+
+    while(deli_dict[*last] && *last != '\0') {
+        last++;
+    }
+    str = last;
+    if(*last == '\0') {
+        free(deli_dict);
+        free(to_free);
+        return NULL;
+    }
+    while (*last != '\0' && !deli_dict[*last]) {
+        last++;
+    }
+
+    *last = '\0';
+    last++;
+
+    free(deli_dict);
+    return str;
+}
+
+static void vnd_patient(struct bt_mesh_model *model,
+                      struct bt_mesh_msg_ctx *ctx,
+                      struct net_buf_simple *buf)
+{
+    char str[32];
+    size_t len;
+
+    if (ctx->addr == bt_mesh_model_elem(model)->addr) {
+        printk("Ignoring message from self\n");
+        return;
+    }
+
+    len = min(buf->len, PATIENT_MAX);
+    memcpy(str, buf->data, len);
+    str[len] = '\0';
+    if (str[0] == '0') {
+        char patient_name[7];
+        memcpy(patient_name, str + 1, 6);
+        patient_name[6] = '\0';
+        char patient_sector[3];
+        memcpy(patient_sector, str + 7, 2);
+        patient_sector[2] = '\0';
+        bool patient_critical;
+        if (str[9] == '1') {
+            patient_critical = true;
+        } else {
+            patient_critical = false;
+        }
+        if (screen_id == SCREEN_PATIENT) {
+            set_patient(patient_name, patient_sector, patient_critical);
+            if (patient_critical) {
+                led(1, 0);
+            } else {
+                led(1, 1);
+            }
+        } else if (screen_id == SCREEN_DOCTOR) {
+            if (patient_critical) {
+                set_doctor(patient_name, patient_sector, patient_critical);
+                led(1, 0);
+            }
+        }
+    } else if (str[0] == '1') {
+        if (screen_id == SCREEN_DOCTOR) {
+            set_doctor("", "", false);
+            led(1, 1);
+        }
+    }
+
+}
+
 static const struct bt_mesh_model_op vnd_ops[] = {
-	{ OP_VND_HELLO, 1, vnd_hello },
+	{ OP_VND_HELLO, 1, vnd_patient },
 	{ OP_VND_HEARTBEAT, 1, vnd_heartbeat },
+//	{ OP_VND_PATIENT, 1, vnd_patient },
 	BT_MESH_MODEL_OP_END,
 };
 

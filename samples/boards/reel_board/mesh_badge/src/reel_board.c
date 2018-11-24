@@ -28,13 +28,6 @@ enum font_size {
 	FONT_SMALL = 2,
 };
 
-enum screen_ids {
-	SCREEN_MAIN = 0,
-	SCREEN_SENSORS = 1,
-	SCREEN_STATS = 2,
-	SCREEN_LAST,
-};
-
 struct font_info {
 	u8_t columns;
 } fonts[] = {
@@ -57,7 +50,7 @@ struct font_info {
 
 static struct device *epd_dev;
 static bool pressed;
-static u8_t screen_id = SCREEN_MAIN;
+u8_t screen_id = SCREEN_MAIN;
 static struct device *gpio;
 static struct k_delayed_work epd_work;
 static struct k_delayed_work long_press_work;
@@ -75,6 +68,7 @@ static struct {
 };
 
 struct k_delayed_work led_timer;
+struct k_delayed_work red_led_timer;
 
 static size_t print_line(enum font_size font_size, int row, const char *text,
 			 size_t len, bool center)
@@ -137,6 +131,15 @@ void board_blink_leds(void)
 	k_delayed_work_submit(&led_timer, K_MSEC(100));
 }
 
+void board_blink_red(void)
+{
+    k_delayed_work_submit(&red_led_timer, K_MSEC(100));
+}
+
+void led (int led, int state) {
+    gpio_pin_write(leds[led].dev, leds[led].pin, state);
+}
+
 void board_show_text(const char *text, bool center, s32_t duration)
 {
 	int i;
@@ -181,6 +184,7 @@ static struct stat {
 		.max_hops = 0,
 	},
 };
+
 
 static u32_t stat_count;
 
@@ -419,15 +423,121 @@ static void show_main(void)
 	board_show_text(buf, true, K_FOREVER);
 }
 
+static struct patient_t {
+	char name[10];
+	char sector[10];
+	bool critical;
+} patient = {
+        .name = "-",
+        .sector = "-",
+        .critical = false,
+};
+
+static struct doctor_t {
+    struct patient_t patient;
+    bool alert;
+} doctor = {
+        .patient = {
+                .name = "",
+                .sector = ""
+        },
+        .alert = false,
+};
+
+void debugg(int *val1, int *val2) {
+	int len,line = 0;
+	char str[13];
+
+	cfb_framebuffer_clear(epd_dev, false);
+
+	len = snprintk(str, sizeof(str), "%d", val1);
+	print_line(FONT_MEDIUM, line++, str, len, true);
+
+    len = snprintk(str, sizeof(str), "%d", val2);
+    print_line(FONT_MEDIUM, line++, str, len, true);
+
+	k_delayed_work_submit(&epd_work, K_SECONDS(3));
+
+	cfb_framebuffer_finalize(epd_dev);
+}
+
+static void show_patient(s32_t interval)
+{
+	int len,line = 0;
+	char str[13];
+
+	cfb_framebuffer_clear(epd_dev, false);
+
+	len = snprintk(str, sizeof(str), "%s", "--PATIENT--");
+	print_line(FONT_BIG, line++, str, len, true);
+
+	len = snprintk(str, sizeof(str), "%s", &patient.name);
+	print_line(FONT_BIG, line++, str, len, true);
+
+	len = snprintk(str, sizeof(str), "%s", &patient.sector);
+	print_line(FONT_BIG, line++, str, len, true);
+
+	k_delayed_work_submit(&epd_work, interval);
+
+	cfb_framebuffer_finalize(epd_dev);
+}
+
+static void show_doctor(s32_t interval)
+{
+    int len,line = 0;
+    char str[13];
+
+    cfb_framebuffer_clear(epd_dev, false);
+
+    len = snprintk(str, sizeof(str), "%s", "--DOCTOR--");
+    print_line(FONT_BIG, line++, str, len, true);
+
+    struct patient_t emergency = doctor.patient;
+
+    if (&emergency.critical) {
+        len = snprintk(str, sizeof(str), "%s", &emergency.name);
+        print_line(FONT_BIG, line++, str, len, true);
+        len = snprintk(str, sizeof(str), "%s", &emergency.sector);
+        print_line(FONT_BIG, line++, str, len, true);
+    }
+
+    k_delayed_work_submit(&epd_work, interval);
+
+    cfb_framebuffer_finalize(epd_dev);
+}
+
+void set_patient (char *name, char *sector, bool critical) {
+	strncpy(patient.name, name, 7);
+	strncpy(patient.sector, sector, 2);
+    patient.critical = critical;
+}
+
+void set_doctor (char *name, char *sector, bool critical) {
+    if (critical) {
+        strncpy(doctor.patient.name, name, 7);
+        strncpy(doctor.patient.sector, sector, 2);
+    } else {
+        memset(doctor.patient.name, " ", 7);
+        memset(doctor.patient.sector, " ", 2);
+    }
+    doctor.alert = critical;
+}
+
 static void epd_update(struct k_work *work)
 {
 	switch (screen_id) {
+	case SCREEN_PATIENT:
+		show_patient(K_SECONDS(2));
+		return;
+    case SCREEN_DOCTOR:
+        show_doctor(K_SECONDS(2));
+        return;
 	case SCREEN_STATS:
 		show_statistics();
 		return;
-	case SCREEN_SENSORS:
-		show_sensors_data(K_SECONDS(2));
-		return;
+//	case SCREEN_SENSORS:
+//		show_sensors_data(K_SECONDS(2));
+//		return;
 	case SCREEN_MAIN:
 		show_main();
 		return;
@@ -475,8 +585,9 @@ static void button_interrupt(struct device *dev, struct gpio_callback *cb,
 
 	/* Short press for views */
 	switch (screen_id) {
-	case SCREEN_SENSORS:
-	case SCREEN_STATS:
+	case SCREEN_PATIENT:
+		return;
+	case SCREEN_DOCTOR:
 		return;
 	case SCREEN_MAIN:
 		if (pins & BIT(SW0_GPIO_PIN)) {
@@ -531,6 +642,25 @@ static void led_timeout(struct k_work *work)
 	k_delayed_work_submit(&led_timer, K_MSEC(100));
 }
 
+static void red_led_timeout(struct k_work *work)
+{
+    static int led_cntr;
+
+    /* Disable all LEDs */
+    gpio_pin_write(leds[1].dev, leds[1].pin, 1);
+
+    /* Stop after 5 iterations */
+    if (led_cntr > 1000) {
+        led_cntr = 0;
+        return;
+    }
+
+
+    gpio_pin_write(leds[1].dev, leds[1].pin, 0);
+
+    k_delayed_work_submit(&red_led_timer, K_MSEC(100));
+}
+
 static int configure_leds(void)
 {
 	int i;
@@ -548,6 +678,7 @@ static int configure_leds(void)
 	}
 
 	k_delayed_work_init(&led_timer, led_timeout);
+	k_delayed_work_init(&red_led_timer, red_led_timeout);
 	return 0;
 }
 
