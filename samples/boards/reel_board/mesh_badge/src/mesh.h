@@ -34,6 +34,7 @@ struct led_onoff_state {
 };
 
 void mesh_send_hello(void);
+void mesh_send_reset_doctor(void);
 
 u16_t mesh_get_addr(void);
 bool mesh_is_initialized(void);

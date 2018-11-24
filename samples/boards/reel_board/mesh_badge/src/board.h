@@ -32,10 +32,10 @@ int get_apds9960_val(struct sensor_value *val);
 int set_led_state(u8_t id, bool state);
 int periphs_init(void);
 int board_init(void);
-void set_patient(char *name, char *sector, bool critical);
-void set_doctor(char *name, char *sector, bool critical);
+void set_patient(char *name, char *sector, int critical);
+void set_doctor(char *name, char *sector, int critical);
 void led(int led, int state);
-void debugg(int *val1, int *val2);
+void debugg(bool val);
 u8_t screen_id;
 
 enum screen_ids {

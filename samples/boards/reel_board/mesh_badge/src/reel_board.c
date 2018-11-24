@@ -426,38 +426,47 @@ static void show_main(void)
 static struct patient_t {
 	char name[10];
 	char sector[10];
-	bool critical;
+    int critical;
 } patient = {
         .name = "-",
         .sector = "-",
-        .critical = false,
+        .critical = 0,
 };
 
 static struct doctor_t {
     struct patient_t patient;
-    bool alert;
+    int alert;
 } doctor = {
         .patient = {
                 .name = "",
                 .sector = ""
         },
-        .alert = false,
+        .alert = 0,
 };
 
-void debugg(int *val1, int *val2) {
-	int len,line = 0;
-	char str[13];
+//void debugg(char *val) {
+//	int len,line = 0;
+//	char str[13];
+//
+//	cfb_framebuffer_clear(epd_dev, false);
+//
+//	len = snprintk(str, sizeof(str), "%s", val);
+//	print_line(FONT_MEDIUM, line++, str, len, true);
+//
+//	k_delayed_work_submit(&epd_work, K_SECONDS(3));
+//
+//	cfb_framebuffer_finalize(epd_dev);
+//}
 
+void debugg(bool val) {
+	int len,line = 0;
+    char str[13];
 	cfb_framebuffer_clear(epd_dev, false);
 
-	len = snprintk(str, sizeof(str), "%d", val1);
+	len = snprintk(str, sizeof(str), "%d", val);
 	print_line(FONT_MEDIUM, line++, str, len, true);
 
-    len = snprintk(str, sizeof(str), "%d", val2);
-    print_line(FONT_MEDIUM, line++, str, len, true);
-
 	k_delayed_work_submit(&epd_work, K_SECONDS(3));
-
 	cfb_framebuffer_finalize(epd_dev);
 }
 
@@ -471,10 +480,10 @@ static void show_patient(s32_t interval)
 	len = snprintk(str, sizeof(str), "%s", "--PATIENT--");
 	print_line(FONT_BIG, line++, str, len, true);
 
-	len = snprintk(str, sizeof(str), "%s", &patient.name);
+	len = snprintk(str, sizeof(str), "name: %s", &patient.name);
 	print_line(FONT_BIG, line++, str, len, true);
 
-	len = snprintk(str, sizeof(str), "%s", &patient.sector);
+	len = snprintk(str, sizeof(str), "sector: %s", &patient.sector);
 	print_line(FONT_BIG, line++, str, len, true);
 
 	k_delayed_work_submit(&epd_work, interval);
@@ -494,10 +503,12 @@ static void show_doctor(s32_t interval)
 
     struct patient_t emergency = doctor.patient;
 
-    if (&emergency.critical) {
-        len = snprintk(str, sizeof(str), "%s", &emergency.name);
+//   debugg(emergency.critical);
+    int name_length = strlen(&emergency.name);
+    if (name_length > 0) {
+        len = snprintk(str, sizeof(str), "find: %s", &emergency.name);
         print_line(FONT_BIG, line++, str, len, true);
-        len = snprintk(str, sizeof(str), "%s", &emergency.sector);
+        len = snprintk(str, sizeof(str), "sector: %s", &emergency.sector);
         print_line(FONT_BIG, line++, str, len, true);
     }
 
@@ -506,19 +517,19 @@ static void show_doctor(s32_t interval)
     cfb_framebuffer_finalize(epd_dev);
 }
 
-void set_patient (char *name, char *sector, bool critical) {
+void set_patient(char *name, char *sector, int critical) {
 	strncpy(patient.name, name, 7);
 	strncpy(patient.sector, sector, 2);
     patient.critical = critical;
 }
 
-void set_doctor (char *name, char *sector, bool critical) {
-    if (critical) {
+void set_doctor(char *name, char *sector, int critical) {
+    if (critical > 0) {
         strncpy(doctor.patient.name, name, 7);
         strncpy(doctor.patient.sector, sector, 2);
     } else {
-        memset(doctor.patient.name, " ", 7);
-        memset(doctor.patient.sector, " ", 2);
+        memset(doctor.patient.name, 0, 7);
+        memset(doctor.patient.sector, 0, 2);
     }
     doctor.alert = critical;
 }
@@ -586,12 +597,16 @@ static void button_interrupt(struct device *dev, struct gpio_callback *cb,
 	/* Short press for views */
 	switch (screen_id) {
 	case SCREEN_PATIENT:
+		if (patient.critical > 0) {
+			mesh_send_reset_doctor();
+			led(1, 1);
+			patient.critical = 0;
+		}
 		return;
 	case SCREEN_DOCTOR:
-		return;
-	case SCREEN_MAIN:
-		if (pins & BIT(SW0_GPIO_PIN)) {
+		if (doctor.alert > 0) {
 			mesh_send_hello();
+			doctor.alert = 0;
 		}
 		return;
 	default:

@@ -60,6 +60,7 @@ struct sensor_hdr_b {
 } __packed;
 
 static struct k_work hello_work;
+static struct k_work reset_doctor_work;
 static struct k_work mesh_start_work;
 
 /* Definitions of models user data (Start) */
@@ -333,7 +334,7 @@ static void vnd_hello(struct bt_mesh_model *model,
 	strcat(str, " says hi!");
 	board_show_text(str, false, K_SECONDS(3));
 
-//	board_blink_leds();
+//board_blink_leds();
 }
 
 static void vnd_heartbeat(struct bt_mesh_model *model,
@@ -360,6 +361,11 @@ static void vnd_patient(struct bt_mesh_model *model,
                       struct bt_mesh_msg_ctx *ctx,
                       struct net_buf_simple *buf)
 {
+
+	char addr[7];
+	sprintf(addr, "0x%04X", mesh_get_addr());
+    addr[6] = '\0';
+
     char str[32];
     size_t len;
 
@@ -378,28 +384,28 @@ static void vnd_patient(struct bt_mesh_model *model,
         char patient_sector[3];
         memcpy(patient_sector, str + 7, 2);
         patient_sector[2] = '\0';
-        bool patient_critical;
+        int patient_critical;
         if (str[9] == '1') {
-            patient_critical = true;
+            patient_critical = 1;
         } else {
-            patient_critical = false;
+            patient_critical = 0;
         }
-        if (screen_id == SCREEN_PATIENT) {
+        if (screen_id == SCREEN_PATIENT && strncmp(patient_name, addr, 6) == 0) {
             set_patient(patient_name, patient_sector, patient_critical);
-            if (patient_critical) {
+            if (patient_critical > 0) {
                 led(1, 0);
             } else {
                 led(1, 1);
             }
         } else if (screen_id == SCREEN_DOCTOR) {
-            if (patient_critical) {
+            if (patient_critical > 0) {
                 set_doctor(patient_name, patient_sector, patient_critical);
                 led(1, 0);
             }
         }
     } else if (str[0] == '1') {
         if (screen_id == SCREEN_DOCTOR) {
-            set_doctor("", "", false);
+            set_doctor("", "", 0);
             led(1, 1);
         }
     }
@@ -487,15 +493,14 @@ static void send_hello(struct k_work *work)
 		.addr = GROUP_ADDR,
 		.send_ttl = DEFAULT_TTL,
 	};
-	const char *name = bt_get_name();
+	const char *name = "1";
 
 	bt_mesh_model_msg_init(&msg, OP_VND_HELLO);
 	net_buf_simple_add_mem(&msg, name,
 			       min(HELLO_MAX, first_name_len(name)));
 
 	if (bt_mesh_model_send(&vnd_models[0], &ctx, &msg, NULL, NULL) == 0) {
-		board_show_text("Saying \"hi!\" to everyone", false,
-				K_SECONDS(2));
+		board_show_text("I'll save this guy!", false, K_SECONDS(2));
 	} else {
 		board_show_text("Sending Failed!", false, K_SECONDS(2));
 	}
@@ -504,6 +509,32 @@ static void send_hello(struct k_work *work)
 void mesh_send_hello(void)
 {
 	k_work_submit(&hello_work);
+}
+
+static void send_reset_doctor(struct k_work *work)
+{
+	NET_BUF_SIMPLE_DEFINE(msg, 3 + HELLO_MAX + 4);
+	struct bt_mesh_msg_ctx ctx = {
+			.net_idx = NET_IDX,
+			.app_idx = APP_IDX,
+			.addr = GROUP_ADDR,
+			.send_ttl = DEFAULT_TTL,
+	};
+	const char *name = "1";
+
+	bt_mesh_model_msg_init(&msg, OP_VND_HELLO);
+	net_buf_simple_add_mem(&msg, name, min(HELLO_MAX, first_name_len(name)));
+
+	if (bt_mesh_model_send(&vnd_models[0], &ctx, &msg, NULL, NULL) == 0) {
+		board_show_text("Doctor came", false, K_SECONDS(2));
+	} else {
+		board_show_text("Sending Failed!", false, K_SECONDS(2));
+	}
+}
+
+void mesh_send_reset_doctor(void)
+{
+	k_work_submit(&reset_doctor_work);
 }
 
 static int provision_and_configure(void)
@@ -614,6 +645,7 @@ int mesh_init(void)
 	};
 
 	k_work_init(&hello_work, send_hello);
+	k_work_init(&reset_doctor_work, send_reset_doctor);
 	k_work_init(&mesh_start_work, start_mesh);
 
 	return bt_mesh_init(&prov, &comp);
